@@ -1,6 +1,6 @@
 /* =====================================================================
-   GOOD - Checkout Alerta FRAGIL SKUs — Painel Online + Buscador Bling
-   - Painel admin (lista de SKUs frágeis e configurações)
+   GOOD - Checkout Alerta FRAGIL SKUs — Painel Online v3
+   - Painel admin com USUÁRIO + SENHA (múltiplos usuários, senhas em hash bcrypt)
    - OAuth Bling com renovação automática
    - Cache de produtos (SKU + EAN + nome + imagem)
    - Endpoint /api/buscar pra autocomplete na UI
@@ -9,14 +9,16 @@
 const express = require("express");
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// ----- ARQUIVO DE DADOS (Render Disk persistente) -----
+// ----- ARQUIVO DE DADOS -----
 const DATA_DIR = fs.existsSync("/data") ? "/data" : path.join(__dirname, "data");
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 const DATA_FILE = path.join(DATA_DIR, "skus.json");
+const USUARIOS_FILE = path.join(DATA_DIR, "usuarios.json");
 
 // ----- ENV VARS -----
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || null;
@@ -28,7 +30,7 @@ const RENDER_SERVICE_ID = process.env.RENDER_SERVICE_ID || "";
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 // ===================================================================
-// PARTE 1 — PAINEL DE SKUs FRÁGEIS (já existia)
+// PARTE 1 — DADOS DE SKUs FRÁGEIS
 // ===================================================================
 
 function dadosPadrao() {
@@ -39,7 +41,8 @@ function dadosPadrao() {
       repetirVoz: false
     },
     skus: {},
-    atualizadoEm: null
+    atualizadoEm: null,
+    atualizadoPor: null
   };
 }
 
@@ -52,27 +55,126 @@ function lerDados() {
     return {
       config: { ...padrao.config, ...(obj.config || {}) },
       skus: obj.skus || {},
-      atualizadoEm: obj.atualizadoEm || null
+      atualizadoEm: obj.atualizadoEm || null,
+      atualizadoPor: obj.atualizadoPor || null
     };
   } catch (e) {
-    console.error("[ERRO] Lendo arquivo:", e.message);
+    console.error("[ERRO] Lendo arquivo skus:", e.message);
     return dadosPadrao();
   }
 }
 
-function salvarDados(dados) {
+function salvarDados(dados, usuario) {
   dados.atualizadoEm = new Date().toISOString();
+  dados.atualizadoPor = usuario || null;
   fs.writeFileSync(DATA_FILE, JSON.stringify(dados, null, 2), "utf8");
   return dados;
 }
 
 // ===================================================================
-// PARTE 2 — BLING OAUTH + CACHE DE PRODUTOS
+// PARTE 2 — USUÁRIOS (hash + sessões)
 // ===================================================================
 
-const cacheDetalhes = new Map();   // id -> produto completo
-const indiceSku = new Map();        // sku_lower -> id
-const indiceEan = new Map();        // ean_digits -> id
+// Hash de senha com PBKDF2 (parte do Node nativo, sem dependência externa)
+// Formato: salt:hash (hex)
+function hashSenha(senha) {
+  const salt = crypto.randomBytes(16).toString("hex");
+  const hash = crypto.pbkdf2Sync(senha, salt, 100000, 64, "sha512").toString("hex");
+  return `${salt}:${hash}`;
+}
+
+function verificarSenha(senha, hashArmazenado) {
+  try {
+    if (!hashArmazenado || !hashArmazenado.includes(":")) return false;
+    const [salt, hash] = hashArmazenado.split(":");
+    const calc = crypto.pbkdf2Sync(senha, salt, 100000, 64, "sha512").toString("hex");
+    // Comparação resistente a timing attacks
+    return crypto.timingSafeEqual(Buffer.from(hash, "hex"), Buffer.from(calc, "hex"));
+  } catch (_) { return false; }
+}
+
+function lerUsuarios() {
+  try {
+    if (!fs.existsSync(USUARIOS_FILE)) return [];
+    const raw = fs.readFileSync(USUARIOS_FILE, "utf8");
+    return JSON.parse(raw) || [];
+  } catch (e) {
+    console.error("[ERRO] Lendo usuarios:", e.message);
+    return [];
+  }
+}
+
+function salvarUsuarios(lista) {
+  fs.writeFileSync(USUARIOS_FILE, JSON.stringify(lista, null, 2), "utf8");
+}
+
+// ----- SESSÕES (em memória) -----
+const sessoes = new Map(); // token -> { usuario, criadoEm, expiraEm }
+const SESSAO_HORAS = 8;
+
+function criarSessao(usuario) {
+  const token = crypto.randomBytes(32).toString("hex");
+  const agora = Date.now();
+  sessoes.set(token, {
+    usuario,
+    criadoEm: agora,
+    expiraEm: agora + SESSAO_HORAS * 60 * 60 * 1000
+  });
+  return token;
+}
+
+function validarSessao(token) {
+  if (!token) return null;
+  const s = sessoes.get(token);
+  if (!s) return null;
+  if (s.expiraEm < Date.now()) {
+    sessoes.delete(token);
+    return null;
+  }
+  return s.usuario;
+}
+
+// Limpa sessões expiradas a cada 1h
+setInterval(() => {
+  const agora = Date.now();
+  for (const [token, s] of sessoes) {
+    if (s.expiraEm < agora) sessoes.delete(token);
+  }
+}, 60 * 60 * 1000);
+
+// ----- AUTENTICAÇÃO -----
+function autenticar(usuario, senha) {
+  const lista = lerUsuarios();
+  // Modo "chave-mestra": se não tem usuários cadastrados,
+  // permite login com user "admin" + ADMIN_PASSWORD do env
+  if (lista.length === 0) {
+    if (usuario === "admin" && ADMIN_PASSWORD && senha === ADMIN_PASSWORD) {
+      return { ok: true, usuario: "admin", perfil: "admin", nome: "Admin (chave-mestra)", chaveMestra: true };
+    }
+    return { ok: false, erro: "Nenhum usuário cadastrado. Use o login admin com a senha mestra." };
+  }
+  const u = lista.find(x => (x.usuario || "").toLowerCase() === (usuario || "").toLowerCase());
+  if (!u) return { ok: false, erro: "Usuário ou senha incorretos." };
+  if (!verificarSenha(senha, u.senhaHash)) return { ok: false, erro: "Usuário ou senha incorretos." };
+  return { ok: true, usuario: u.usuario, perfil: u.perfil || "admin", nome: u.nome || u.usuario };
+}
+
+// Middleware: exige sessão válida
+function exigirAuth(req, res, next) {
+  const token = req.headers["x-session-token"] || "";
+  const usuario = validarSessao(token);
+  if (!usuario) return res.status(401).json({ erro: "Sessão expirada ou inválida. Faça login novamente." });
+  req.usuario = usuario;
+  next();
+}
+
+// ===================================================================
+// PARTE 3 — BLING OAUTH + CACHE DE PRODUTOS
+// ===================================================================
+
+const cacheDetalhes = new Map();
+const indiceSku = new Map();
+const indiceEan = new Map();
 let listagemCarregada = false;
 let eansCarregados = false;
 
@@ -121,10 +223,9 @@ function formatarProduto(p) {
   };
 }
 
-// ----- Atualizar env var no Render (pra persistir tokens novos) -----
 async function atualizarVariavelRender(chave, valor) {
   if (!RENDER_API_KEY || !RENDER_SERVICE_ID) {
-    console.warn("[RENDER] RENDER_API_KEY ou RENDER_SERVICE_ID não configurados, token não será persistido");
+    console.warn("[RENDER] RENDER_API_KEY/SERVICE_ID não configurados, token não persistido");
     return false;
   }
   try {
@@ -132,61 +233,35 @@ async function atualizarVariavelRender(chave, valor) {
       `https://api.render.com/v1/services/${RENDER_SERVICE_ID}/env-vars`,
       { headers: { Authorization: `Bearer ${RENDER_API_KEY}`, Accept: "application/json" } }
     );
-    if (!getResp.ok) {
-      console.warn("[RENDER] GET env-vars falhou:", getResp.status);
-      return false;
-    }
+    if (!getResp.ok) return false;
     const envVars = await getResp.json();
     const atualizadas = envVars.map(item => ({
       key: item.envVar?.key || item.key,
-      value: (item.envVar?.key || item.key) === chave
-        ? valor
-        : (item.envVar?.value || item.value || "")
+      value: (item.envVar?.key || item.key) === chave ? valor : (item.envVar?.value || item.value || "")
     }));
     const putResp = await fetch(
       `https://api.render.com/v1/services/${RENDER_SERVICE_ID}/env-vars`,
       {
         method: "PUT",
-        headers: {
-          Authorization: `Bearer ${RENDER_API_KEY}`,
-          "Content-Type": "application/json",
-          Accept: "application/json"
-        },
+        headers: { Authorization: `Bearer ${RENDER_API_KEY}`, "Content-Type": "application/json", Accept: "application/json" },
         body: JSON.stringify(atualizadas)
       }
     );
-    if (!putResp.ok) {
-      console.warn("[RENDER] PUT env-vars falhou:", putResp.status);
-      return false;
-    }
-    return true;
-  } catch (e) {
-    console.warn("[RENDER] erro:", e.message);
-    return false;
-  }
+    return putResp.ok;
+  } catch (e) { console.warn("[RENDER]", e.message); return false; }
 }
 
-// ----- OAuth Bling -----
 async function renovarAccessToken() {
-  if (!BLING_CLIENT_ID || !BLING_CLIENT_SECRET) {
-    throw new Error("BLING_CLIENT_ID/SECRET ausentes nas env vars");
-  }
+  if (!BLING_CLIENT_ID || !BLING_CLIENT_SECRET) throw new Error("BLING_CLIENT_ID/SECRET ausentes");
   const refreshToken = process.env.BLING_REFRESH_TOKEN;
-  if (!refreshToken) {
-    throw new Error("BLING_REFRESH_TOKEN ausente — faça o login OAuth inicial em /auth/bling");
-  }
+  if (!refreshToken) throw new Error("BLING_REFRESH_TOKEN ausente — faça login OAuth");
   const basicAuth = Buffer.from(`${BLING_CLIENT_ID}:${BLING_CLIENT_SECRET}`).toString("base64");
   const body = new URLSearchParams();
   body.append("grant_type", "refresh_token");
   body.append("refresh_token", String(refreshToken).trim());
-
   const r = await fetch("https://www.bling.com.br/Api/v3/oauth/token", {
     method: "POST",
-    headers: {
-      Authorization: `Basic ${basicAuth}`,
-      "Content-Type": "application/x-www-form-urlencoded",
-      Accept: "1.0"
-    },
+    headers: { Authorization: `Basic ${basicAuth}`, "Content-Type": "application/x-www-form-urlencoded", Accept: "1.0" },
     body: body.toString()
   });
   let data = {};
@@ -207,11 +282,7 @@ async function blingFetch(url, options = {}) {
   async function doFetch(t) {
     const r = await fetch(url, {
       ...options,
-      headers: {
-        Authorization: `Bearer ${t}`,
-        Accept: "application/json",
-        ...(options.headers || {})
-      }
+      headers: { Authorization: `Bearer ${t}`, Accept: "application/json", ...(options.headers || {}) }
     });
     let d = {};
     try { d = await r.json(); } catch { d = {}; }
@@ -228,16 +299,12 @@ async function blingFetch(url, options = {}) {
 async function blingFetchComRetry(url, options = {}) {
   for (let i = 0; i < 4; i++) {
     const result = await blingFetch(url, options);
-    if (result.response.status === 429) {
-      await sleep(1500 * (i + 1));
-      continue;
-    }
+    if (result.response.status === 429) { await sleep(1500 * (i + 1)); continue; }
     return result;
   }
   return await blingFetch(url, options);
 }
 
-// ----- Carregar índice de produtos -----
 async function buscarDetalhe(id) {
   const cached = cacheDetalhes.get(String(id));
   if (cached) return cached;
@@ -254,7 +321,7 @@ async function buscarDetalhe(id) {
 }
 
 async function carregarEansBackground() {
-  console.log("[EANS] Iniciando carregamento de EANs em background...");
+  console.log("[EANS] Carregando EANs em background...");
   let total = 0;
   for (const [, id] of indiceSku) {
     if (cacheDetalhes.has(id)) { total++; continue; }
@@ -262,31 +329,27 @@ async function carregarEansBackground() {
       await sleep(1000);
       await buscarDetalhe(id);
       total++;
-      if (total % 50 === 0) {
-        console.log(`[EANS] ${total}/${indiceSku.size} produtos carregados...`);
-      }
-    } catch (e) { /* ignora erros individuais */ }
+      if (total % 50 === 0) console.log(`[EANS] ${total}/${indiceSku.size} carregados...`);
+    } catch (e) { /* ignora */ }
   }
   eansCarregados = true;
-  console.log(`[EANS] ✅ Todos os EANs carregados! ${indiceEan.size} EANs no índice.`);
+  console.log(`[EANS] ✅ Completo! ${indiceEan.size} EANs.`);
 }
 
 async function carregarIndiceListagem() {
   if (!process.env.BLING_ACCESS_TOKEN && !process.env.BLING_REFRESH_TOKEN) {
-    console.warn("[INDICE] Sem tokens Bling — pulando carregamento de produtos. Faça login em /auth/bling");
+    console.warn("[INDICE] Sem tokens Bling — pulando.");
     return;
   }
-  console.log("[INDICE] Carregando índice de produtos do Bling...");
+  console.log("[INDICE] Carregando produtos...");
   let pagina = 1;
   let total = 0;
   while (true) {
     try {
-      const url = `https://api.bling.com.br/Api/v3/produtos?pagina=${pagina}&limite=100`;
-      const { response, data } = await blingFetchComRetry(url);
-      if (!response.ok) {
-        console.warn(`[INDICE] Erro página ${pagina}:`, response.status);
-        break;
-      }
+      const { response, data } = await blingFetchComRetry(
+        `https://api.bling.com.br/Api/v3/produtos?pagina=${pagina}&limite=100`
+      );
+      if (!response.ok) { console.warn(`[INDICE] página ${pagina}:`, response.status); break; }
       const lista = data?.data || [];
       if (!lista.length) break;
       for (const item of lista) {
@@ -299,15 +362,11 @@ async function carregarIndiceListagem() {
       if (lista.length < 100) break;
       pagina++;
       await sleep(300);
-    } catch (e) {
-      console.error("[INDICE] Erro:", e.message);
-      break;
-    }
+    } catch (e) { console.error("[INDICE]", e.message); break; }
   }
   listagemCarregada = true;
-  console.log(`[INDICE] ✅ ${total} produtos indexados por SKU.`);
+  console.log(`[INDICE] ✅ ${total} produtos indexados.`);
   carregarEansBackground();
-  // Sync periódico
   setInterval(async () => {
     try {
       const { response, data } = await blingFetchComRetry(
@@ -323,35 +382,24 @@ async function carregarIndiceListagem() {
         indiceSku.set(normalize(item.codigo), id);
         if (item.sku) indiceSku.set(normalize(item.sku), id);
       }
-      if (novos > 0) console.log(`[INDICE] Sync: ${novos} produtos novos.`);
+      if (novos > 0) console.log(`[INDICE] Sync: ${novos} novos.`);
     } catch (e) { /* ignora */ }
   }, 5 * 60 * 1000);
 }
 
 // ===================================================================
-// PARTE 3 — MIDDLEWARE
+// PARTE 4 — MIDDLEWARE
 // ===================================================================
 
 app.use(express.json({ limit: "1mb" }));
-
 app.use((req, res, next) => {
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.header("Access-Control-Allow-Headers", "Content-Type, X-Admin-Password");
+  res.header("Access-Control-Allow-Headers", "Content-Type, X-Session-Token");
   if (req.method === "OPTIONS") return res.sendStatus(204);
   next();
 });
-
 app.use(express.static(path.join(__dirname, "public")));
-
-function exigirSenha(req, res, next) {
-  if (!ADMIN_PASSWORD) return next();
-  const enviada = req.headers["x-admin-password"] || "";
-  if (enviada !== ADMIN_PASSWORD) {
-    return res.status(401).json({ erro: "Senha invalida ou nao fornecida." });
-  }
-  next();
-}
 
 function clampInt(v, min, max, fallback) {
   const n = parseInt(v, 10);
@@ -360,30 +408,108 @@ function clampInt(v, min, max, fallback) {
 }
 
 // ===================================================================
-// PARTE 4 — ROTAS
+// PARTE 5 — ROTAS
 // ===================================================================
 
-// ----- API: SKUs frágeis (lista + config) -----
+// ----- LOGIN / LOGOUT -----
+app.post("/api/login", (req, res) => {
+  const { usuario, senha } = req.body || {};
+  const r = autenticar(usuario, senha);
+  if (!r.ok) return res.status(401).json({ ok: false, erro: r.erro });
+  const token = criarSessao(r.usuario);
+  console.log(`[LOGIN] ${r.usuario}${r.chaveMestra ? " (CHAVE-MESTRA)" : ""}`);
+  res.json({
+    ok: true, token,
+    usuario: r.usuario, perfil: r.perfil, nome: r.nome,
+    chaveMestra: !!r.chaveMestra,
+    expiraHoras: SESSAO_HORAS
+  });
+});
+
+app.post("/api/logout", exigirAuth, (req, res) => {
+  const token = req.headers["x-session-token"];
+  sessoes.delete(token);
+  res.json({ ok: true });
+});
+
+app.get("/api/me", exigirAuth, (req, res) => {
+  const lista = lerUsuarios();
+  const u = lista.find(x => (x.usuario || "").toLowerCase() === req.usuario.toLowerCase());
+  res.json({ ok: true, usuario: req.usuario, nome: u?.nome || req.usuario, perfil: u?.perfil || "admin", chaveMestra: lista.length === 0 });
+});
+
+// ----- USUÁRIOS (gestão) -----
+app.get("/api/usuarios", exigirAuth, (req, res) => {
+  const lista = lerUsuarios().map(u => ({ usuario: u.usuario, nome: u.nome, perfil: u.perfil }));
+  res.json({ ok: true, usuarios: lista });
+});
+
+app.post("/api/usuarios", exigirAuth, (req, res) => {
+  const { usuario, senha, nome, perfil } = req.body || {};
+  if (!usuario || !senha) return res.status(400).json({ erro: "Usuário e senha são obrigatórios." });
+  if (senha.length < 6) return res.status(400).json({ erro: "Senha deve ter pelo menos 6 caracteres." });
+  const lista = lerUsuarios();
+  if (lista.find(u => (u.usuario || "").toLowerCase() === usuario.toLowerCase())) {
+    return res.status(400).json({ erro: "Já existe usuário com esse nome." });
+  }
+  lista.push({
+    usuario: usuario.trim(),
+    senhaHash: hashSenha(senha),
+    nome: (nome || usuario).trim(),
+    perfil: perfil === "admin" ? "admin" : "admin",
+    criadoEm: new Date().toISOString(),
+    criadoPor: req.usuario
+  });
+  salvarUsuarios(lista);
+  console.log(`[USUARIO] ${req.usuario} criou ${usuario}`);
+  res.json({ ok: true, total: lista.length });
+});
+
+app.delete("/api/usuarios/:usuario", exigirAuth, (req, res) => {
+  const alvo = req.params.usuario;
+  const lista = lerUsuarios();
+  const novaLista = lista.filter(u => (u.usuario || "").toLowerCase() !== alvo.toLowerCase());
+  if (novaLista.length === lista.length) return res.status(404).json({ erro: "Usuário não encontrado." });
+  if (novaLista.length === 0) return res.status(400).json({ erro: "Não pode remover o último usuário cadastrado." });
+  salvarUsuarios(novaLista);
+  console.log(`[USUARIO] ${req.usuario} removeu ${alvo}`);
+  res.json({ ok: true });
+});
+
+app.post("/api/usuarios/:usuario/senha", exigirAuth, (req, res) => {
+  const alvo = req.params.usuario;
+  const { novaSenha } = req.body || {};
+  if (!novaSenha || novaSenha.length < 6) return res.status(400).json({ erro: "Senha deve ter pelo menos 6 caracteres." });
+  const lista = lerUsuarios();
+  const u = lista.find(x => (x.usuario || "").toLowerCase() === alvo.toLowerCase());
+  if (!u) return res.status(404).json({ erro: "Usuário não encontrado." });
+  u.senhaHash = hashSenha(novaSenha);
+  salvarUsuarios(lista);
+  console.log(`[USUARIO] ${req.usuario} alterou senha de ${alvo}`);
+  res.json({ ok: true });
+});
+
+// ----- API: SKUs frágeis -----
 app.get("/api/skus", (req, res) => {
   res.json(lerDados());
 });
 
-app.post("/api/skus", exigirSenha, (req, res) => {
+app.post("/api/skus", exigirAuth, (req, res) => {
   try {
     const body = req.body || {};
     const atual = lerDados();
     const novo = {
       config: {
-        tempoMinimoSegundos: clampInt(body && body.config && body.config.tempoMinimoSegundos, 0, 30, atual.config.tempoMinimoSegundos),
-        mensagemPadrao: typeof (body && body.config && body.config.mensagemPadrao) === "string"
+        tempoMinimoSegundos: clampInt(body?.config?.tempoMinimoSegundos, 0, 30, atual.config.tempoMinimoSegundos),
+        mensagemPadrao: typeof body?.config?.mensagemPadrao === "string"
           ? body.config.mensagemPadrao.slice(0, 500)
           : atual.config.mensagemPadrao,
-        repetirVoz: !!(body && body.config && body.config.repetirVoz)
+        repetirVoz: !!(body?.config?.repetirVoz)
       },
       skus: typeof body.skus === "object" && body.skus !== null ? body.skus : atual.skus
     };
-    const salvo = salvarDados(novo);
-    console.log("[SAVE] " + Object.keys(salvo.skus).length + " SKUs | tempoMin=" + salvo.config.tempoMinimoSegundos + "s");
+    const salvo = salvarDados(novo, req.usuario);
+    console.log(`[SAVE] ${req.usuario} salvou ${Object.keys(salvo.skus).length} SKUs`);
     res.json(salvo);
   } catch (e) {
     console.error("[ERRO] POST /api/skus:", e);
@@ -391,24 +517,12 @@ app.post("/api/skus", exigirSenha, (req, res) => {
   }
 });
 
-// ----- API: check auth -----
-app.get("/api/check-auth", (req, res) => {
-  res.json({ exigeSenha: !!ADMIN_PASSWORD });
-});
-
-app.post("/api/check-auth", (req, res) => {
-  if (!ADMIN_PASSWORD) return res.json({ ok: true, exigeSenha: false });
-  const enviada = req.headers["x-admin-password"] || "";
-  res.json({ ok: enviada === ADMIN_PASSWORD, exigeSenha: true });
-});
-
-// ----- API: buscar produtos (autocomplete) -----
-app.get("/api/buscar", exigirSenha, (req, res) => {
+// ----- API: buscar produtos no Bling -----
+app.get("/api/buscar", exigirAuth, (req, res) => {
   try {
     const termo = String(req.query.q || "").trim();
     const cacheStatus = {
-      listagemCarregada,
-      eansCarregados,
+      listagemCarregada, eansCarregados,
       skusIndexados: indiceSku.size,
       detalhesEmCache: cacheDetalhes.size
     };
@@ -424,23 +538,14 @@ app.get("/api/buscar", exigirSenha, (req, res) => {
       idsVistos.add(id);
       resultados.push(item);
     }
-    // 1. SKU
     for (const [skuNorm, id] of indiceSku) {
       if (resultados.length >= limiteResp) break;
       if (skuNorm.includes(termoNorm)) {
         const p = cacheDetalhes.get(String(id));
-        if (p) {
-          adicionar(formatarProduto(p));
-        } else {
-          adicionar({
-            id, codigo: skuNorm.toUpperCase(),
-            nome: "(carregando detalhes...)",
-            imagem: "", ean: ""
-          });
-        }
+        if (p) adicionar(formatarProduto(p));
+        else adicionar({ id, codigo: skuNorm.toUpperCase(), nome: "(carregando...)", imagem: "", ean: "" });
       }
     }
-    // 2. EAN (numérico, 8+ dígitos)
     if (termoDigits.length >= 8 && resultados.length < limiteResp) {
       for (const [ean, id] of indiceEan) {
         if (resultados.length >= limiteResp) break;
@@ -450,14 +555,12 @@ app.get("/api/buscar", exigirSenha, (req, res) => {
         }
       }
     }
-    // 3. Nome (apenas em produtos com detalhe carregado)
     if (resultados.length < limiteResp) {
       for (const [, p] of cacheDetalhes) {
         if (resultados.length >= limiteResp) break;
         if (normalize(p.nome).includes(termoNorm)) adicionar(formatarProduto(p));
       }
     }
-    // Ordena: matches exatos por SKU primeiro, depois alfabético
     resultados.sort((a, b) => {
       const aExact = normalize(a.codigo) === termoNorm ? 0 : 1;
       const bExact = normalize(b.codigo) === termoNorm ? 0 : 1;
@@ -466,15 +569,13 @@ app.get("/api/buscar", exigirSenha, (req, res) => {
     });
     res.json({ ok: true, total: resultados.length, resultados, cacheStatus });
   } catch (e) {
-    console.error("[/api/buscar] ERRO:", e.message);
+    console.error("[/api/buscar]", e.message);
     res.status(500).json({ ok: false, erro: e.message });
   }
 });
 
 // ----- OAUTH BLING -----
-const OAUTH_REDIRECT = (req) => `${req.protocol}://${req.get("host")}/bling/callback`;
-
-app.get("/auth/bling", exigirSenha, (req, res) => {
+app.get("/auth/bling", (req, res) => {
   if (!BLING_CLIENT_ID) return res.status(500).send("BLING_CLIENT_ID não configurado");
   const url = `https://www.bling.com.br/Api/v3/oauth/authorize?response_type=code&client_id=${encodeURIComponent(BLING_CLIENT_ID)}&state=${Date.now()}`;
   res.redirect(url);
@@ -484,43 +585,34 @@ app.get("/bling/callback", async (req, res) => {
   try {
     const code = req.query.code;
     if (!code) return res.status(400).send("Faltou ?code=");
-    if (!BLING_CLIENT_ID || !BLING_CLIENT_SECRET) {
-      return res.status(500).send("BLING_CLIENT_ID/SECRET não configurados");
-    }
+    if (!BLING_CLIENT_ID || !BLING_CLIENT_SECRET) return res.status(500).send("BLING_CLIENT_ID/SECRET ausentes");
     const basicAuth = Buffer.from(`${BLING_CLIENT_ID}:${BLING_CLIENT_SECRET}`).toString("base64");
     const body = new URLSearchParams();
     body.append("grant_type", "authorization_code");
     body.append("code", String(code).trim());
     const r = await fetch("https://www.bling.com.br/Api/v3/oauth/token", {
       method: "POST",
-      headers: {
-        Authorization: `Basic ${basicAuth}`,
-        "Content-Type": "application/x-www-form-urlencoded",
-        Accept: "1.0"
-      },
+      headers: { Authorization: `Basic ${basicAuth}`, "Content-Type": "application/x-www-form-urlencoded", Accept: "1.0" },
       body: body.toString()
     });
     let data = {};
     try { data = await r.json(); } catch { data = {}; }
-    if (!r.ok || !data?.access_token) {
-      return res.status(500).send("Erro OAuth: " + (data?.error?.description || r.status));
-    }
+    if (!r.ok || !data?.access_token) return res.status(500).send("Erro OAuth: " + (data?.error?.description || r.status));
     process.env.BLING_ACCESS_TOKEN = data.access_token;
     process.env.BLING_REFRESH_TOKEN = data.refresh_token;
     await atualizarVariavelRender("BLING_ACCESS_TOKEN", data.access_token);
     await atualizarVariavelRender("BLING_REFRESH_TOKEN", data.refresh_token);
-    console.log("[OAUTH] Login concluído. Iniciando carregamento de produtos...");
+    console.log("[OAUTH] Login concluído.");
     setTimeout(carregarIndiceListagem, 1000);
     res.send(`
       <html><body style="font-family:Arial;padding:40px;text-align:center;">
         <h1 style="color:#28a745;">✅ Login Bling concluído!</h1>
-        <p>Tokens capturados e salvos no Render.</p>
-        <p>O carregamento dos produtos vai começar agora (leva ~30s pra SKUs e ~18min pra EANs e nomes completos).</p>
+        <p>Tokens capturados e salvos. Carregamento dos produtos iniciado.</p>
         <p><a href="/">Voltar ao painel</a></p>
       </body></html>
     `);
   } catch (e) {
-    console.error("[OAUTH] erro:", e);
+    console.error("[OAUTH]", e);
     res.status(500).send("Erro: " + e.message);
   }
 });
@@ -528,11 +620,14 @@ app.get("/bling/callback", async (req, res) => {
 // ----- HEALTH + STATUS -----
 app.get("/health", (req, res) => {
   const dados = lerDados();
+  const usuarios = lerUsuarios();
   res.json({
     ok: true,
     skusFrageis: Object.keys(dados.skus).length,
     atualizadoEm: dados.atualizadoEm,
-    senhaConfigurada: !!ADMIN_PASSWORD,
+    atualizadoPor: dados.atualizadoPor,
+    usuariosCadastrados: usuarios.length,
+    chaveMestraAtiva: usuarios.length === 0 && !!ADMIN_PASSWORD,
     blingConfigurado: !!BLING_CLIENT_ID && !!BLING_CLIENT_SECRET,
     blingLogado: !!process.env.BLING_ACCESS_TOKEN || !!process.env.BLING_REFRESH_TOKEN
   });
@@ -540,8 +635,7 @@ app.get("/health", (req, res) => {
 
 app.get("/api/cache-status", (req, res) => {
   res.json({
-    listagemCarregada,
-    eansCarregados,
+    listagemCarregada, eansCarregados,
     skusIndexados: indiceSku.size,
     eansIndexados: indiceEan.size,
     detalhesEmCache: cacheDetalhes.size
@@ -551,11 +645,15 @@ app.get("/api/cache-status", (req, res) => {
 // ----- START -----
 app.listen(PORT, () => {
   console.log("[SERVER] rodando na porta " + PORT);
-  console.log("[DATA]   arquivo: " + DATA_FILE);
-  console.log("[AUTH]   senha admin: " + (ADMIN_PASSWORD ? "CONFIGURADA" : "NAO configurada (painel aberto)"));
+  console.log("[DATA]   skus: " + DATA_FILE);
+  console.log("[DATA]   usuarios: " + USUARIOS_FILE);
+  const usuarios = lerUsuarios();
+  console.log(`[AUTH]   usuários cadastrados: ${usuarios.length}`);
+  if (usuarios.length === 0) {
+    console.log(`[AUTH]   modo CHAVE-MESTRA ativo (login: admin + ADMIN_PASSWORD)`);
+  }
   console.log("[BLING]  client: " + (BLING_CLIENT_ID ? "OK" : "FALTANDO"));
-  console.log("[BLING]  tokens: " + (process.env.BLING_ACCESS_TOKEN ? "OK (vai carregar produtos em 3s)" : "FALTANDO (acesse /auth/bling)"));
-  // Carrega índice se já tiver tokens
+  console.log("[BLING]  tokens: " + (process.env.BLING_ACCESS_TOKEN ? "OK" : "FALTANDO (acesse /auth/bling)"));
   if (process.env.BLING_ACCESS_TOKEN || process.env.BLING_REFRESH_TOKEN) {
     setTimeout(carregarIndiceListagem, 3000);
   }
