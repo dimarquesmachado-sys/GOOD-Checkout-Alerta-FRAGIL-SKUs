@@ -333,16 +333,15 @@ function renderResultadosBusca() {
     const sku = p.codigo || "";
     const jaTem = ja.has(sku);
     const checked = selecionados.has(sku) ? "checked" : "";
-    const disabled = jaTem ? "disabled" : "";
     const imgHtml = p.imagem
       ? `<img src="${escapeHtml(p.imagem)}" alt="" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='inline-flex';" /><span class="sem-img" style="display:none;">📦</span>`
       : `<span class="sem-img">📦</span>`;
     return `
-      <label class="busca-item" ${jaTem ? 'style="opacity:0.5;"' : ""}>
-        <input type="checkbox" data-i="${i}" ${checked} ${disabled} />
+      <label class="busca-item" ${jaTem ? 'style="opacity:0.55;background:#f8f9fa;"' : ""}>
+        <input type="checkbox" data-i="${i}" ${checked} ${jaTem ? 'disabled' : ''} />
         ${imgHtml}
         <div class="busca-item-info">
-          <div class="sku">${escapeHtml(sku)}${jaTem ? " <small>(já cadastrado)</small>" : ""}</div>
+          <div class="sku">${escapeHtml(sku)}${jaTem ? ' <small style="color:#dc3545;font-weight:bold;">(já cadastrado)</small>' : ""}</div>
           <div class="nome">${escapeHtml(p.nome || "(sem nome)")}</div>
           ${p.ean ? `<div class="ean">EAN: ${escapeHtml(p.ean)}</div>` : ""}
         </div>
@@ -350,7 +349,7 @@ function renderResultadosBusca() {
     `;
   }).join("");
   $("busca-resultados").innerHTML = html;
-  $("busca-resultados").querySelectorAll('input[type=checkbox]').forEach(cb => {
+  $("busca-resultados").querySelectorAll('input[type=checkbox]:not([disabled])').forEach(cb => {
     cb.addEventListener("change", () => {
       const idx = parseInt(cb.dataset.i, 10);
       const p = resultadosBusca[idx];
@@ -594,6 +593,15 @@ document.addEventListener("keydown", (e) => {
     if ($("modal-busca").classList.contains("visivel")) fecharModalBusca();
     if ($("modal-usuario").classList.contains("visivel")) fecharModalNovoUsuario();
   }
+});
+
+// Cards colapsáveis (Configurações, Usuários)
+document.querySelectorAll(".card-collapse h2").forEach(h => {
+  h.addEventListener("click", (e) => {
+    // Não colapsa se clicou em algo interativo dentro do header
+    if (e.target.tagName === "INPUT" || e.target.tagName === "BUTTON") return;
+    h.parentElement.classList.toggle("collapsed");
+  });
 });
 
 // ============================================================
