@@ -117,6 +117,14 @@
     .modal-footer { display: flex; justify-content: space-between; margin-top: 18px; align-items: center; }
     .modal-footer .info-total { font-size: 13px; color: #6c757d; }
 
+    /* CARDS COLAPSÁVEIS */
+    .card-collapse h2 { cursor: pointer; user-select: none; display: flex; align-items: center; gap: 8px; }
+    .card-collapse h2::before {
+      content: "▼"; font-size: 12px; transition: transform 0.2s;
+    }
+    .card-collapse.collapsed h2::before { transform: rotate(-90deg); }
+    .card-collapse.collapsed .card-body { display: none; }
+
     /* USUÁRIOS */
     .lista-usuarios { width: 100%; border-collapse: separate; border-spacing: 0; }
     .lista-usuarios th { background: #495057; color: white; text-align: left; padding: 10px 14px; font-size: 13px; }
@@ -164,8 +172,9 @@
     </div>
 
     <!-- CONFIGURAÇÕES GERAIS -->
-    <div class="card">
+    <div class="card card-collapse collapsed" id="card-config">
       <h2>⚙️ Configurações Gerais</h2>
+      <div class="card-body">
       <div class="row">
         <div>
           <label for="tempo">Tempo mínimo antes do botão OK liberar (segundos)</label>
@@ -182,6 +191,7 @@
       <label for="msgPadrao">Mensagem padrão (quando o SKU não tiver mensagem própria)</label>
       <input type="text" id="msgPadrao" maxlength="500" />
       <div class="meta">Esta é a frase que a voz vai ler para SKUs cadastrados sem mensagem custom.</div>
+      </div>
     </div>
 
     <!-- LISTA DE SKUs FRÁGEIS -->
@@ -196,7 +206,7 @@
         Mudanças aqui são refletidas em <strong>todos os computadores do estoque automaticamente</strong> em até alguns minutos.
       </div>
 
-      <input type="text" class="filtro" id="filtro" placeholder="🔎 Filtrar por SKU, nome ou mensagem..." />
+      <input type="text" class="filtro" id="filtro" placeholder="🔎 Filtrar SKUs já cadastrados (por SKU, nome ou mensagem)..." />
 
       <table class="tabela-skus">
         <thead>
@@ -228,11 +238,13 @@
     </div>
 
     <!-- USUÁRIOS -->
-    <div class="card">
+    <div class="card card-collapse collapsed" id="card-usuarios">
       <h2>👥 Usuários do Painel <small>(somente quem pode editar a lista)</small></h2>
+      <div class="card-body">
       <div id="lista-usuarios-area">Carregando...</div>
       <div style="margin-top:14px;">
         <button class="btn-add" id="btn-novo-usuario">➕ Novo usuário</button>
+      </div>
       </div>
     </div>
   </div>
