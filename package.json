@@ -1,0 +1,15 @@
+{
+  "name": "good-checkout-alerta-fragil-skus",
+  "version": "1.0.0",
+  "description": "Painel online para gerenciar lista de SKUs frágeis e configurações da extensão de checkout do Bling",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
