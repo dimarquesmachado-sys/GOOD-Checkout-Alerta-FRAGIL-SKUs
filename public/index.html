@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GOOD - Alerta Produto Frágil — Painel</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: Arial, Helvetica, sans-serif;
+      background: #f5f5f5;
+      margin: 0;
+      padding: 24px;
+      color: #212529;
+    }
+    .container { max-width: 920px; margin: 0 auto; }
+    h1 {
+      color: #dc3545;
+      margin-top: 0;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    h1 .ico { font-size: 36px; }
+    h2 {
+      color: #495057;
+      margin-top: 0;
+      font-size: 20px;
+    }
+    .card {
+      background: white;
+      border-radius: 12px;
+      padding: 24px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+      margin-bottom: 20px;
+    }
+    .info {
+      background: #e3f2fd;
+      border-left: 5px solid #2196f3;
+      padding: 14px 18px;
+      border-radius: 6px;
+      margin-bottom: 18px;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    .info code {
+      background: #fff;
+      padding: 2px 6px;
+      border-radius: 4px;
+      border: 1px solid #ddd;
+      font-size: 13px;
+    }
+    label {
+      display: block;
+      font-weight: bold;
+      margin-bottom: 8px;
+      color: #495057;
+    }
+    .label-inline {
+      display: inline-block;
+      margin-right: 16px;
+      font-weight: bold;
+    }
+    textarea, input[type=text], input[type=number], input[type=password] {
+      width: 100%;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 14px;
+      padding: 10px 12px;
+      border: 2px solid #dee2e6;
+      border-radius: 8px;
+      line-height: 1.5;
+    }
+    input[type=number] { width: 100px; font-family: Arial; }
+    input[type=text].normal { font-family: Arial; }
+    textarea {
+      min-height: 360px;
+      resize: vertical;
+    }
+    textarea:focus, input:focus { outline: none; border-color: #dc3545; }
+    .row {
+      display: flex;
+      gap: 24px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-bottom: 14px;
+    }
+    .row > div { flex: 1; min-width: 220px; }
+    .acoes {
+      display: flex;
+      gap: 12px;
+      margin-top: 16px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    button {
+      padding: 12px 28px;
+      font-size: 15px;
+      font-weight: bold;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    button:hover { opacity: 0.85; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-salvar { background: #28a745; color: white; }
+    .btn-recarregar { background: #6c757d; color: white; }
+    .btn-testar { background: #007bff; color: white; }
+    #status {
+      margin-left: auto;
+      font-weight: bold;
+      font-size: 14px;
+    }
+    .ok { color: #28a745; }
+    .erro { color: #dc3545; }
+    .contador {
+      display: inline-block;
+      background: #dc3545;
+      color: white;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 13px;
+      font-weight: bold;
+      margin-left: 8px;
+    }
+    details { margin-top: 16px; }
+    summary {
+      cursor: pointer;
+      font-weight: bold;
+      color: #007bff;
+      padding: 8px 0;
+    }
+    .exemplo {
+      background: #f8f9fa;
+      padding: 12px;
+      border-radius: 6px;
+      font-family: 'Courier New', Courier, monospace;
+      font-size: 13px;
+      margin-top: 8px;
+      white-space: pre-wrap;
+      border: 1px solid #dee2e6;
+    }
+    .auth-tela {
+      display: none;
+      max-width: 400px;
+      margin: 80px auto;
+      background: white;
+      padding: 40px;
+      border-radius: 12px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+      text-align: center;
+    }
+    .auth-tela.visivel { display: block; }
+    .conteudo.escondido { display: none; }
+    .meta {
+      font-size: 12px;
+      color: #6c757d;
+      margin-top: 8px;
+    }
+    input[type=checkbox] { transform: scale(1.3); margin-right: 8px; vertical-align: middle; }
+  </style>
+</head>
+<body>
+
+  <!-- Tela de autenticação (só aparece se servidor exigir senha) -->
+  <div class="auth-tela" id="auth-tela">
+    <h2>🔒 Painel Restrito</h2>
+    <p>Digite a senha de admin para continuar:</p>
+    <input type="password" id="auth-senha" placeholder="Senha" autofocus />
+    <div style="margin-top:14px;">
+      <button class="btn-salvar" id="btn-auth">Entrar</button>
+    </div>
+    <div id="auth-erro" class="erro" style="margin-top:12px;"></div>
+  </div>
+
+  <div class="container conteudo" id="conteudo">
+    <h1><span class="ico">⚠️</span> Alerta Produto Frágil — Painel</h1>
+
+    <div class="card">
+      <h2>Configurações Gerais</h2>
+      <div class="row">
+        <div>
+          <label for="tempo">Tempo mínimo antes do botão OK liberar (segundos)</label>
+          <input type="number" id="tempo" min="0" max="30" value="2" />
+          <div class="meta">0 = libera imediatamente · 2 a 5 = força o estoquista a ler antes de clicar</div>
+        </div>
+        <div>
+          <label for="repetir">
+            <input type="checkbox" id="repetir" /> Repetir a voz 1x ao terminar
+          </label>
+          <div class="meta">Se ativado, depois que a voz termina, ela toca de novo (após 0,5s).</div>
+        </div>
+      </div>
+      <label for="msgPadrao">Mensagem padrão (quando o SKU não tiver mensagem própria)</label>
+      <input type="text" id="msgPadrao" class="normal" maxlength="500" />
+      <div class="meta">Esta é a frase que a voz vai ler para SKUs cadastrados sem mensagem custom.</div>
+    </div>
+
+    <div class="card">
+      <h2>
+        Lista de SKUs frágeis
+        <span class="contador" id="contador">0 SKUs</span>
+      </h2>
+
+      <div class="info">
+        <strong>Formato:</strong> 1 SKU por linha. Pra adicionar mensagem custom, use <code>SKU | Mensagem</code>.
+        Linhas com <code>#</code> são comentários (ignoradas). Mudanças aqui são refletidas em <strong>todos os
+        computadores do estoque automaticamente</strong> em até alguns minutos.
+      </div>
+
+      <textarea id="lista" placeholder="Um SKU por linha. Exemplo:&#10;TAC-VID-001&#10;CRIST-12345&#10;COPO-CR-001 | Atenção, taça de cristal, embalar duplo bolha&#10;ABAJUR-LED-22 | Produto delicado, reforçar com isopor"></textarea>
+
+      <details>
+        <summary>📖 Como usar (clique para abrir)</summary>
+        <div class="exemplo">Formato:
+  SKU
+  ou
+  SKU | Mensagem customizada para esse produto
+
+Linhas que começam com # são comentários (ignoradas).
+Linhas em branco também são ignoradas.
+
+Exemplo completo:
+
+  # Taças de cristal
+  TAC-CR-001 | Atenção, taça de cristal, embalar com plástico bolha duplo
+  TAC-CR-002 | Atenção, taça de cristal, embalar com plástico bolha duplo
+
+  # Vidros em geral (mensagem padrão)
+  VID-001
+  VID-002
+
+  # Globos de vidro
+  KJDD-E-187 | Globo de vidro, embalar com bolha</div>
+      </details>
+    </div>
+
+    <div class="card">
+      <div class="acoes">
+        <button class="btn-salvar" id="btn-salvar">💾 Salvar tudo</button>
+        <button class="btn-recarregar" id="btn-recarregar">🔄 Recarregar</button>
+        <span id="status"></span>
+      </div>
+      <div class="meta" id="atualizadoEm" style="margin-top:14px;"></div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
