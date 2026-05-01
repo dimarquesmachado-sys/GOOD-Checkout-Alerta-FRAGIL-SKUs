@@ -510,6 +510,9 @@ async function carregar() {
     $("tempo").value = j.config?.tempoMinimoSegundos ?? 2;
     $("msgPadrao").value = j.config?.mensagemPadrao || "";
     $("repetir").checked = !!j.config?.repetirVoz;
+    const vel = j.config?.velocidadeVoz ?? 1.2;
+    $("velocidade").value = vel;
+    $("velocidade-valor").textContent = vel.toFixed(1) + "x";
     if (j.atualizadoEm) {
       const por = j.atualizadoPor ? ` por ${j.atualizadoPor}` : "";
       $("atualizadoEm").textContent = "Última atualização: " + new Date(j.atualizadoEm).toLocaleString("pt-BR") + por;
@@ -541,7 +544,8 @@ async function salvar() {
       config: {
         tempoMinimoSegundos: parseInt($("tempo").value, 10) || 0,
         mensagemPadrao: $("msgPadrao").value.trim(),
-        repetirVoz: !!$("repetir").checked
+        repetirVoz: !!$("repetir").checked,
+        velocidadeVoz: parseFloat($("velocidade").value) || 1.2
       },
       skus: lerTabelaParaMapa()
     };
@@ -570,6 +574,27 @@ $("btn-salvar").addEventListener("click", salvar);
 $("btn-recarregar").addEventListener("click", () => { carregar(); carregarStatus(); });
 $("btn-add-manual").addEventListener("click", () => adicionarLinha("", "", {}, true));
 $("filtro").addEventListener("input", aplicarFiltro);
+
+// Atualiza o label do slider de velocidade em tempo real + permite testar
+$("velocidade").addEventListener("input", () => {
+  const v = parseFloat($("velocidade").value);
+  $("velocidade-valor").textContent = v.toFixed(1) + "x";
+});
+$("velocidade").addEventListener("change", () => {
+  // Toca um teste rápido quando solta o slider
+  if (!("speechSynthesis" in window)) return;
+  try {
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance($("msgPadrao").value || "Atenção. Produto frágil. Embalar com plástico bolha.");
+    u.lang = "pt-BR";
+    u.rate = parseFloat($("velocidade").value) || 1.2;
+    u.pitch = 1; u.volume = 1;
+    const vozes = window.speechSynthesis.getVoices();
+    const voz = vozes.find(v => /pt[-_]br/i.test(v.lang)) || vozes.find(v => /^pt/i.test(v.lang));
+    if (voz) u.voice = voz;
+    window.speechSynthesis.speak(u);
+  } catch (_) {}
+});
 
 $("btn-abrir-busca").addEventListener("click", abrirModalBusca);
 $("busca-fechar").addEventListener("click", fecharModalBusca);
