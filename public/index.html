@@ -195,6 +195,18 @@
           <div class="meta">0.7x = bem devagar · 1.0x = normal · 1.2x = um pouco mais rápida (recomendado) · 2.0x = bem rápida</div>
         </div>
       </div>
+      <div class="row" style="align-items:flex-end;">
+        <div style="flex: 2;">
+          <label for="nomeVoz">Voz</label>
+          <select id="nomeVoz" style="width:100%; padding:10px 12px; border:2px solid #dee2e6; border-radius:8px; font-size:14px;">
+            <option value="">Voz padrão do sistema (automático)</option>
+          </select>
+          <div class="meta">As vozes mostradas aqui são as do <b>SEU PC</b>. Se a voz escolhida não existir no PC do estoquista, ele usará a melhor voz pt-BR disponível dele.</div>
+        </div>
+        <div>
+          <button class="btn-buscar" id="btn-testar-voz" type="button" style="margin-bottom: 0;">🔊 Testar voz</button>
+        </div>
+      </div>
       <label for="msgPadrao">Mensagem padrão (quando o SKU não tiver mensagem própria)</label>
       <input type="text" id="msgPadrao" maxlength="500" />
       <div class="meta">Esta é a frase que a voz vai ler para SKUs cadastrados sem mensagem custom.</div>
