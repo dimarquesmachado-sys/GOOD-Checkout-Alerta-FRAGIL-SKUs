@@ -494,6 +494,76 @@ async function removerUsuario(usuario) {
 }
 
 // ============================================================
+// VOZES
+// ============================================================
+let vozesDisponiveis = [];
+
+function popularDropdownVozes() {
+  if (!("speechSynthesis" in window)) return;
+  vozesDisponiveis = window.speechSynthesis.getVoices();
+  const $sel = $("nomeVoz");
+  if (!$sel) return;
+  // Filtra vozes pt e ordena: pt-BR primeiro, depois pt geral
+  const ptBr = vozesDisponiveis.filter(v => /pt[-_]br/i.test(v.lang));
+  const ptOutras = vozesDisponiveis.filter(v => /^pt/i.test(v.lang) && !/pt[-_]br/i.test(v.lang));
+  const valorAtual = $sel.value || "";
+  // Mantém apenas a primeira option (a "padrão"), remove as antigas
+  while ($sel.options.length > 1) $sel.remove(1);
+  for (const v of ptBr) {
+    const opt = document.createElement("option");
+    opt.value = v.name;
+    opt.textContent = `${v.name} (pt-BR)`;
+    $sel.appendChild(opt);
+  }
+  if (ptOutras.length > 0) {
+    const sep = document.createElement("option");
+    sep.disabled = true;
+    sep.textContent = "─── Outras vozes em português ───";
+    $sel.appendChild(sep);
+    for (const v of ptOutras) {
+      const opt = document.createElement("option");
+      opt.value = v.name;
+      opt.textContent = `${v.name} (${v.lang})`;
+      $sel.appendChild(opt);
+    }
+  }
+  // Restaura valor selecionado se ainda existir nas options
+  $sel.value = valorAtual;
+}
+
+if ("speechSynthesis" in window) {
+  popularDropdownVozes();
+  window.speechSynthesis.onvoiceschanged = popularDropdownVozes;
+}
+
+function testarVoz() {
+  if (!("speechSynthesis" in window)) {
+    alert("Seu navegador não suporta síntese de voz.");
+    return;
+  }
+  try {
+    window.speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(
+      $("msgPadrao").value || "Atenção. Produto frágil. Embalar com plástico bolha e reforçar a caixa."
+    );
+    u.lang = "pt-BR";
+    u.rate = parseFloat($("velocidade").value) || 1.2;
+    u.pitch = 1; u.volume = 1;
+    const nomeEscolhido = $("nomeVoz").value;
+    if (nomeEscolhido) {
+      const voz = vozesDisponiveis.find(v => v.name === nomeEscolhido);
+      if (voz) u.voice = voz;
+    } else {
+      const voz = vozesDisponiveis.find(v => /pt[-_]br/i.test(v.lang)) || vozesDisponiveis.find(v => /^pt/i.test(v.lang));
+      if (voz) u.voice = voz;
+    }
+    window.speechSynthesis.speak(u);
+  } catch (e) {
+    console.warn("Erro ao testar voz:", e);
+  }
+}
+
+// ============================================================
 // SALVAR / CARREGAR
 // ============================================================
 function status(txt, ok) {
@@ -513,6 +583,7 @@ async function carregar() {
     const vel = j.config?.velocidadeVoz ?? 1.2;
     $("velocidade").value = vel;
     $("velocidade-valor").textContent = vel.toFixed(1) + "x";
+    if ($("nomeVoz")) $("nomeVoz").value = j.config?.nomeVoz || "";
     if (j.atualizadoEm) {
       const por = j.atualizadoPor ? ` por ${j.atualizadoPor}` : "";
       $("atualizadoEm").textContent = "Última atualização: " + new Date(j.atualizadoEm).toLocaleString("pt-BR") + por;
@@ -545,7 +616,8 @@ async function salvar() {
         tempoMinimoSegundos: parseInt($("tempo").value, 10) || 0,
         mensagemPadrao: $("msgPadrao").value.trim(),
         repetirVoz: !!$("repetir").checked,
-        velocidadeVoz: parseFloat($("velocidade").value) || 1.2
+        velocidadeVoz: parseFloat($("velocidade").value) || 1.2,
+        nomeVoz: $("nomeVoz") ? ($("nomeVoz").value || "") : ""
       },
       skus: lerTabelaParaMapa()
     };
@@ -580,21 +652,9 @@ $("velocidade").addEventListener("input", () => {
   const v = parseFloat($("velocidade").value);
   $("velocidade-valor").textContent = v.toFixed(1) + "x";
 });
-$("velocidade").addEventListener("change", () => {
-  // Toca um teste rápido quando solta o slider
-  if (!("speechSynthesis" in window)) return;
-  try {
-    window.speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance($("msgPadrao").value || "Atenção. Produto frágil. Embalar com plástico bolha.");
-    u.lang = "pt-BR";
-    u.rate = parseFloat($("velocidade").value) || 1.2;
-    u.pitch = 1; u.volume = 1;
-    const vozes = window.speechSynthesis.getVoices();
-    const voz = vozes.find(v => /pt[-_]br/i.test(v.lang)) || vozes.find(v => /^pt/i.test(v.lang));
-    if (voz) u.voice = voz;
-    window.speechSynthesis.speak(u);
-  } catch (_) {}
-});
+$("velocidade").addEventListener("change", testarVoz);
+$("nomeVoz")?.addEventListener("change", testarVoz);
+$("btn-testar-voz")?.addEventListener("click", testarVoz);
 
 $("btn-abrir-busca").addEventListener("click", abrirModalBusca);
 $("busca-fechar").addEventListener("click", fecharModalBusca);
