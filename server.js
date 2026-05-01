@@ -38,7 +38,9 @@ function dadosPadrao() {
     config: {
       tempoMinimoSegundos: 2,
       mensagemPadrao: "Atenção. Produto frágil. Embalar com plástico bolha e reforçar a caixa.",
-      repetirVoz: false
+      repetirVoz: false,
+      velocidadeVoz: 1.2,
+      nomeVoz: ""
     },
     skus: {},
     atualizadoEm: null,
@@ -407,6 +409,12 @@ function clampInt(v, min, max, fallback) {
   return Math.max(min, Math.min(max, n));
 }
 
+function clampFloat(v, min, max, fallback) {
+  const n = parseFloat(v);
+  if (Number.isNaN(n)) return fallback;
+  return Math.max(min, Math.min(max, n));
+}
+
 // ===================================================================
 // PARTE 5 — ROTAS
 // ===================================================================
@@ -504,7 +512,11 @@ app.post("/api/skus", exigirAuth, (req, res) => {
         mensagemPadrao: typeof body?.config?.mensagemPadrao === "string"
           ? body.config.mensagemPadrao.slice(0, 500)
           : atual.config.mensagemPadrao,
-        repetirVoz: !!(body?.config?.repetirVoz)
+        repetirVoz: !!(body?.config?.repetirVoz),
+        velocidadeVoz: clampFloat(body?.config?.velocidadeVoz, 0.5, 2.0, atual.config.velocidadeVoz),
+        nomeVoz: typeof body?.config?.nomeVoz === "string"
+          ? body.config.nomeVoz.slice(0, 200)
+          : (atual.config.nomeVoz || "")
       },
       skus: typeof body.skus === "object" && body.skus !== null ? body.skus : atual.skus
     };
