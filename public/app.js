@@ -708,17 +708,16 @@ function confirmarImport() {
 function exportarExcel() {
   if (!window.XLSX) { alert("Biblioteca XLSX ainda carregando, aguarde."); return; }
   const linhas = $tbody().querySelectorAll("tr");
-  const dados = [["SKU", "Nome do produto", "Mensagem"]];
+  const dados = [["SKU", "Mensagem"]];
   for (const tr of linhas) {
     const sku = tr.querySelector(".input-sku")?.value.trim() || "";
     const msg = tr.querySelector(".input-msg")?.value.trim() || "";
-    const nome = tr.dataset.nome || "";
     if (!sku) continue;
-    dados.push([sku, nome, msg]);
+    dados.push([sku, msg]);
   }
   if (dados.length === 1) { alert("Lista vazia, nada pra exportar."); return; }
   const ws = XLSX.utils.aoa_to_sheet(dados);
-  ws["!cols"] = [{ wch: 22 }, { wch: 50 }, { wch: 50 }];
+  ws["!cols"] = [{ wch: 22 }, { wch: 60 }];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "SKUs Frágeis");
   const data = new Date();
