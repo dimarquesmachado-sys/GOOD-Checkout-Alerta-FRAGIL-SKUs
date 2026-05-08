@@ -564,6 +564,170 @@ function testarVoz() {
 }
 
 // ============================================================
+// IMPORTAR / EXPORTAR PLANILHA
+// ============================================================
+let pendentesImport = []; // [{sku, msg}]
+
+function abrirModalImport() {
+  $("modal-import").classList.add("visivel");
+  $("preview-import").style.display = "none";
+  $("preview-import").innerHTML = "";
+  $("import-confirmar").disabled = true;
+  $("import-info").textContent = "";
+  $("upload-arquivo").value = "";
+  $("bulk-textarea").value = "";
+  pendentesImport = [];
+}
+function fecharModalImport() {
+  $("modal-import").classList.remove("visivel");
+}
+
+function alternarTabImport(nome) {
+  document.querySelectorAll(".modal-import .tab-btn").forEach(b => {
+    b.classList.toggle("ativo", b.dataset.tab === nome);
+  });
+  document.querySelectorAll(".modal-import .tab-conteudo").forEach(c => {
+    c.classList.toggle("ativo", c.dataset.tab === nome);
+  });
+}
+
+// Detecta se uma linha é cabeçalho (ex: "sku" / "código" / "mensagem" / "obs")
+function ehCabecalho(linha) {
+  if (!linha || linha.length === 0) return false;
+  const txt = (linha[0] || "").toString().trim().toLowerCase();
+  return /^(sku|c[oó]digo|cod\.?|item|produto)$/i.test(txt);
+}
+
+function processarLinhas(linhas) {
+  // Remove cabeçalho se houver
+  if (linhas.length > 0 && ehCabecalho(linhas[0])) linhas = linhas.slice(1);
+
+  const validos = [];
+  const erros = [];
+  const jaExistentes = new Set(Object.keys(lerTabelaParaMapa()));
+  const skusVistos = new Set();
+
+  for (let i = 0; i < linhas.length; i++) {
+    const linha = linhas[i];
+    if (!linha || linha.length === 0) continue;
+    const sku = (linha[0] || "").toString().trim();
+    const msg = ((linha[1] || "") + "").trim();
+    if (!sku) continue;
+    if (skusVistos.has(sku.toLowerCase())) {
+      erros.push({ tipo: "duplicado", linha: i + 1, sku, msg });
+      continue;
+    }
+    skusVistos.add(sku.toLowerCase());
+    if (jaExistentes.has(sku)) {
+      erros.push({ tipo: "ja-cadastrado", linha: i + 1, sku, msg });
+      continue;
+    }
+    validos.push({ sku, msg });
+  }
+  return { validos, erros };
+}
+
+function mostrarPreview(validos, erros) {
+  const $p = $("preview-import");
+  $p.style.display = "block";
+  let html = "";
+  if (validos.length > 0) {
+    html += `<div><b>✅ ${validos.length} SKU(s) prontos pra adicionar:</b></div>`;
+    const amostra = validos.slice(0, 30);
+    for (const v of amostra) {
+      html += `<div class="ok-line">• ${escapeHtml(v.sku)}${v.msg ? " — " + escapeHtml(v.msg) : ""}</div>`;
+    }
+    if (validos.length > 30) html += `<div class="ok-line">... e mais ${validos.length - 30}</div>`;
+  }
+  if (erros.length > 0) {
+    html += `<div style="margin-top:10px;"><b>⚠️ ${erros.length} ignorado(s):</b></div>`;
+    const dups = erros.filter(e => e.tipo === "duplicado");
+    const ja = erros.filter(e => e.tipo === "ja-cadastrado");
+    if (ja.length > 0) {
+      html += `<div class="aviso-line">— ${ja.length} já cadastrado(s): ${ja.slice(0, 8).map(e => escapeHtml(e.sku)).join(", ")}${ja.length > 8 ? "..." : ""}</div>`;
+    }
+    if (dups.length > 0) {
+      html += `<div class="aviso-line">— ${dups.length} duplicado(s) na própria planilha: ${dups.slice(0, 8).map(e => escapeHtml(e.sku)).join(", ")}${dups.length > 8 ? "..." : ""}</div>`;
+    }
+  }
+  if (validos.length === 0 && erros.length === 0) {
+    html = `<div class="erro-line">Nenhum SKU encontrado no arquivo. Verifique o formato.</div>`;
+  }
+  $p.innerHTML = html;
+  $("import-confirmar").disabled = validos.length === 0;
+  $("import-info").textContent = `${validos.length} novo(s) · ${erros.length} ignorado(s)`;
+  pendentesImport = validos;
+}
+
+function processarTextoBulk() {
+  const txt = $("bulk-textarea").value.trim();
+  if (!txt) { alert("Cole algum texto antes de processar."); return; }
+  // Detecta separador: prioriza TAB (Excel paste), depois |, depois ;
+  const linhasRaw = txt.split(/\r?\n/).filter(l => l.trim());
+  const linhas = linhasRaw.map(l => {
+    if (l.includes("\t")) return l.split("\t");
+    if (l.includes("|")) return l.split("|");
+    if (l.includes(";")) return l.split(";");
+    return [l]; // só SKU sem mensagem
+  });
+  const { validos, erros } = processarLinhas(linhas);
+  mostrarPreview(validos, erros);
+}
+
+function processarArquivoExcel(file) {
+  if (!window.XLSX) { alert("Biblioteca XLSX ainda carregando, aguarde 2s e tente de novo."); return; }
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const data = new Uint8Array(e.target.result);
+      const wb = XLSX.read(data, { type: "array" });
+      const aba = wb.SheetNames[0];
+      const ws = wb.Sheets[aba];
+      const linhas = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: "" });
+      const { validos, erros } = processarLinhas(linhas);
+      mostrarPreview(validos, erros);
+    } catch (err) {
+      alert("Erro lendo arquivo: " + err.message);
+    }
+  };
+  reader.onerror = () => alert("Erro lendo arquivo.");
+  reader.readAsArrayBuffer(file);
+}
+
+function confirmarImport() {
+  if (pendentesImport.length === 0) return;
+  let n = 0;
+  for (const item of pendentesImport) {
+    adicionarLinha(item.sku, item.msg, {});
+    n++;
+  }
+  fecharModalImport();
+  status(`✓ ${n} SKU(s) adicionado(s) à lista. Não esqueça de SALVAR TUDO.`, true);
+}
+
+function exportarExcel() {
+  if (!window.XLSX) { alert("Biblioteca XLSX ainda carregando, aguarde."); return; }
+  const linhas = $tbody().querySelectorAll("tr");
+  const dados = [["SKU", "Nome do produto", "Mensagem"]];
+  for (const tr of linhas) {
+    const sku = tr.querySelector(".input-sku")?.value.trim() || "";
+    const msg = tr.querySelector(".input-msg")?.value.trim() || "";
+    const nome = tr.dataset.nome || "";
+    if (!sku) continue;
+    dados.push([sku, nome, msg]);
+  }
+  if (dados.length === 1) { alert("Lista vazia, nada pra exportar."); return; }
+  const ws = XLSX.utils.aoa_to_sheet(dados);
+  ws["!cols"] = [{ wch: 22 }, { wch: 50 }, { wch: 50 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "SKUs Frágeis");
+  const data = new Date();
+  const nome = `skus-frageis-${data.toISOString().slice(0, 10).replace(/-/g, "")}.xlsx`;
+  XLSX.writeFile(wb, nome);
+  status(`✓ ${dados.length - 1} SKU(s) exportados para ${nome}`, true);
+}
+
+// ============================================================
 // SALVAR / CARREGAR
 // ============================================================
 function status(txt, ok) {
@@ -669,6 +833,33 @@ $("usuario-cancelar").addEventListener("click", fecharModalNovoUsuario);
 $("usuario-criar").addEventListener("click", criarUsuario);
 $("novo-senha").addEventListener("keydown", (e) => { if (e.key === "Enter") criarUsuario(); });
 
+// IMPORT/EXPORT
+$("btn-importar").addEventListener("click", abrirModalImport);
+$("btn-exportar").addEventListener("click", exportarExcel);
+$("import-fechar").addEventListener("click", fecharModalImport);
+$("import-cancelar").addEventListener("click", fecharModalImport);
+$("import-confirmar").addEventListener("click", confirmarImport);
+$("bulk-processar").addEventListener("click", processarTextoBulk);
+
+document.querySelectorAll(".modal-import .tab-btn").forEach(b => {
+  b.addEventListener("click", () => alternarTabImport(b.dataset.tab));
+});
+
+// Upload de arquivo (clique e drag-n-drop)
+$("upload-arquivo").addEventListener("change", (e) => {
+  const f = e.target.files[0];
+  if (f) processarArquivoExcel(f);
+});
+const $up = $("upload-area");
+$up.addEventListener("dragover", (e) => { e.preventDefault(); $up.classList.add("dragover"); });
+$up.addEventListener("dragleave", () => $up.classList.remove("dragover"));
+$up.addEventListener("drop", (e) => {
+  e.preventDefault();
+  $up.classList.remove("dragover");
+  const f = e.dataTransfer.files[0];
+  if (f) processarArquivoExcel(f);
+});
+
 document.addEventListener("keydown", (e) => {
   if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
     e.preventDefault();
@@ -677,6 +868,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     if ($("modal-busca").classList.contains("visivel")) fecharModalBusca();
     if ($("modal-usuario").classList.contains("visivel")) fecharModalNovoUsuario();
+    if ($("modal-import").classList.contains("visivel")) fecharModalImport();
   }
 });
 
