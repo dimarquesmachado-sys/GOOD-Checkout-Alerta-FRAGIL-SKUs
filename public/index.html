@@ -84,6 +84,44 @@
     .login-tela button { width: 100%; margin-top: 20px; }
     .conteudo.escondido { display: none; }
 
+    /* IMPORT/EXPORT MODAL */
+    .modal-import .acoes-import {
+      display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 16px;
+    }
+    .modal-import .tab-btns {
+      display: flex; gap: 4px; margin-bottom: 12px; border-bottom: 2px solid #dee2e6;
+    }
+    .modal-import .tab-btn {
+      padding: 10px 18px; background: transparent; color: #6c757d; border: none;
+      border-radius: 6px 6px 0 0; cursor: pointer; font-weight: bold; font-size: 14px;
+    }
+    .modal-import .tab-btn.ativo {
+      background: #495057; color: white;
+    }
+    .modal-import .tab-conteudo { display: none; }
+    .modal-import .tab-conteudo.ativo { display: block; }
+    .upload-area {
+      border: 2px dashed #adb5bd; border-radius: 12px; padding: 40px 20px; text-align: center;
+      cursor: pointer; transition: all 0.15s;
+    }
+    .upload-area:hover { border-color: #007bff; background: #f8f9fa; }
+    .upload-area.dragover { border-color: #28a745; background: #d4edda; }
+    .upload-area .icone { font-size: 56px; margin-bottom: 8px; }
+    .upload-area input[type=file] { display: none; }
+    .modal-import textarea#bulk-textarea {
+      width: 100%; min-height: 240px; padding: 12px;
+      border: 2px solid #dee2e6; border-radius: 8px;
+      font-family: 'Courier New', monospace; font-size: 13px;
+    }
+    .modal-import textarea:focus { outline: none; border-color: #dc3545; }
+    .preview-import {
+      margin-top: 14px; padding: 12px; background: #f8f9fa; border-radius: 8px;
+      max-height: 240px; overflow-y: auto; font-size: 13px; border: 1px solid #dee2e6;
+    }
+    .preview-import .ok-line { color: #155724; }
+    .preview-import .erro-line { color: #721c24; }
+    .preview-import .aviso-line { color: #856404; }
+
     /* MODAL DE BUSCA DE PRODUTOS */
     .modal-overlay {
       display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 100;
@@ -243,6 +281,8 @@
       <div style="margin-top:14px; display:flex; gap:10px; flex-wrap:wrap;">
         <button class="btn-buscar" id="btn-abrir-busca">🔎 Buscar produtos no Bling</button>
         <button class="btn-add" id="btn-add-manual">➕ Adicionar SKU manualmente</button>
+        <button class="btn-add" id="btn-importar" style="background:#6f42c1;">📥 Importar planilha</button>
+        <button class="btn-add" id="btn-exportar" style="background:#fd7e14;">📤 Exportar Excel</button>
       </div>
     </div>
 
@@ -317,6 +357,62 @@
     </div>
   </div>
 
+  <!-- MODAL DE IMPORTAR PLANILHA -->
+  <div class="modal-overlay modal-import" id="modal-import">
+    <div class="modal" style="max-width: 680px;">
+      <div class="modal-header">
+        <h2>📥 Importar SKUs em lote</h2>
+        <button class="modal-fechar" id="import-fechar">×</button>
+      </div>
+
+      <div class="tab-btns">
+        <button class="tab-btn ativo" data-tab="excel">📊 Excel/CSV</button>
+        <button class="tab-btn" data-tab="bulk">📋 Colar texto</button>
+      </div>
+
+      <!-- Tab: Excel -->
+      <div class="tab-conteudo ativo" data-tab="excel">
+        <div class="info" style="margin-top:0;">
+          Formato esperado: <b>2 colunas</b> — primeira <code>SKU</code>, segunda <code>Mensagem</code> (opcional).
+          A primeira linha pode ser cabeçalho (será detectada e ignorada). Aceita <code>.xlsx</code>, <code>.xls</code> e <code>.csv</code>.
+        </div>
+        <label for="upload-arquivo" class="upload-area" id="upload-area">
+          <input type="file" id="upload-arquivo" accept=".xlsx,.xls,.csv" />
+          <div class="icone">📁</div>
+          <div><b>Clique aqui ou arraste o arquivo</b></div>
+          <div class="meta">Excel (.xlsx, .xls) ou CSV</div>
+        </label>
+      </div>
+
+      <!-- Tab: Colar -->
+      <div class="tab-conteudo" data-tab="bulk">
+        <div class="info" style="margin-top:0;">
+          Cola direto do Excel/Sheets (Ctrl+C lá → Ctrl+V aqui). Formato: <code>SKU [TAB] Mensagem</code> — uma linha por SKU.
+          Ou simplesmente <code>SKU | Mensagem</code> (separado por <code>|</code>). A mensagem é opcional.
+        </div>
+        <textarea id="bulk-textarea" placeholder="Exemplo:
+KJDD-E-187	Globo de vidro, embalar com bolha
+TAC-CR-001	Taça de cristal
+COPO-VID-09	(deixar em branco para usar mensagem padrão)
+ABAJUR-22	Embalar com isopor"></textarea>
+        <div style="margin-top:12px;">
+          <button class="btn-add" id="bulk-processar">Processar texto colado</button>
+        </div>
+      </div>
+
+      <div class="preview-import" id="preview-import" style="display:none;"></div>
+
+      <div class="modal-footer" style="margin-top:18px;">
+        <span class="info-total" id="import-info"></span>
+        <div>
+          <button class="btn-secundario" id="import-cancelar">Cancelar</button>
+          <button class="btn-salvar" id="import-confirmar" disabled>Adicionar à lista</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
