@@ -566,7 +566,9 @@ function testarVoz() {
 // ============================================================
 // IMPORTAR / EXPORTAR PLANILHA
 // ============================================================
-let pendentesImport = []; // [{sku, msg}]
+let pendentesNovos = [];        // [{sku, msg}] — SKUs que não existiam
+let pendentesAtualizar = [];    // [{sku, msgNova, msgAtual}] — SKUs já cadastrados
+let modoDuplicados = "ignorar"; // "ignorar" | "atualizar"
 
 function abrirModalImport() {
   $("modal-import").classList.add("visivel");
@@ -576,7 +578,9 @@ function abrirModalImport() {
   $("import-info").textContent = "";
   $("upload-arquivo").value = "";
   $("bulk-textarea").value = "";
-  pendentesImport = [];
+  pendentesNovos = [];
+  pendentesAtualizar = [];
+  modoDuplicados = "ignorar";
 }
 function fecharModalImport() {
   $("modal-import").classList.remove("visivel");
@@ -591,7 +595,7 @@ function alternarTabImport(nome) {
   });
 }
 
-// Detecta se uma linha é cabeçalho (ex: "sku" / "código" / "mensagem" / "obs")
+// Detecta se uma linha é cabeçalho
 function ehCabecalho(linha) {
   if (!linha || linha.length === 0) return false;
   const txt = (linha[0] || "").toString().trim().toLowerCase();
@@ -599,12 +603,12 @@ function ehCabecalho(linha) {
 }
 
 function processarLinhas(linhas) {
-  // Remove cabeçalho se houver
   if (linhas.length > 0 && ehCabecalho(linhas[0])) linhas = linhas.slice(1);
 
-  const validos = [];
-  const erros = [];
-  const jaExistentes = new Set(Object.keys(lerTabelaParaMapa()));
+  const novos = [];
+  const atualizar = [];
+  const dupsPlanilha = [];
+  const mapaAtual = lerTabelaParaMapa();
   const skusVistos = new Set();
 
   for (let i = 0; i < linhas.length; i++) {
@@ -613,65 +617,130 @@ function processarLinhas(linhas) {
     const sku = (linha[0] || "").toString().trim();
     const msg = ((linha[1] || "") + "").trim();
     if (!sku) continue;
+
     if (skusVistos.has(sku.toLowerCase())) {
-      erros.push({ tipo: "duplicado", linha: i + 1, sku, msg });
+      dupsPlanilha.push({ linha: i + 1, sku });
       continue;
     }
     skusVistos.add(sku.toLowerCase());
-    if (jaExistentes.has(sku)) {
-      erros.push({ tipo: "ja-cadastrado", linha: i + 1, sku, msg });
-      continue;
+
+    if (Object.prototype.hasOwnProperty.call(mapaAtual, sku)) {
+      atualizar.push({ sku, msgNova: msg, msgAtual: mapaAtual[sku] || "" });
+    } else {
+      novos.push({ sku, msg });
     }
-    validos.push({ sku, msg });
   }
-  return { validos, erros };
+  return { novos, atualizar, dupsPlanilha };
 }
 
-function mostrarPreview(validos, erros) {
+function mostrarPreview(novos, atualizar, dupsPlanilha) {
   const $p = $("preview-import");
   $p.style.display = "block";
+
+  // Conta quantos atualizações realmente mudam algo
+  const atualizarComMudanca = atualizar.filter(a => a.msgNova !== a.msgAtual);
+  const atualizarSemMudanca = atualizar.length - atualizarComMudanca.length;
+
   let html = "";
-  if (validos.length > 0) {
-    html += `<div><b>✅ ${validos.length} SKU(s) prontos pra adicionar:</b></div>`;
-    const amostra = validos.slice(0, 30);
+
+  if (novos.length > 0) {
+    html += `<div><b>✅ ${novos.length} SKU(s) novo(s) — serão adicionados:</b></div>`;
+    const amostra = novos.slice(0, 20);
     for (const v of amostra) {
       html += `<div class="ok-line">• ${escapeHtml(v.sku)}${v.msg ? " — " + escapeHtml(v.msg) : ""}</div>`;
     }
-    if (validos.length > 30) html += `<div class="ok-line">... e mais ${validos.length - 30}</div>`;
+    if (novos.length > 20) html += `<div class="ok-line">... e mais ${novos.length - 20}</div>`;
   }
-  if (erros.length > 0) {
-    html += `<div style="margin-top:10px;"><b>⚠️ ${erros.length} ignorado(s):</b></div>`;
-    const dups = erros.filter(e => e.tipo === "duplicado");
-    const ja = erros.filter(e => e.tipo === "ja-cadastrado");
-    if (ja.length > 0) {
-      html += `<div class="aviso-line">— ${ja.length} já cadastrado(s): ${ja.slice(0, 8).map(e => escapeHtml(e.sku)).join(", ")}${ja.length > 8 ? "..." : ""}</div>`;
+
+  // SE TEM SKUs JÁ CADASTRADOS, MOSTRA OPÇÃO DE ESCOLHA
+  if (atualizar.length > 0) {
+    html += `<div style="margin-top:14px; padding:12px; background:#fff3cd; border-radius:6px;">`;
+    html += `<b>⚠️ ${atualizar.length} SKU(s) já cadastrado(s) na lista`;
+    if (atualizarComMudanca.length > 0) {
+      html += ` — ${atualizarComMudanca.length} com mensagem diferente da planilha</b>`;
+    } else {
+      html += ` (todos com mensagens iguais às da planilha)</b>`;
     }
-    if (dups.length > 0) {
-      html += `<div class="aviso-line">— ${dups.length} duplicado(s) na própria planilha: ${dups.slice(0, 8).map(e => escapeHtml(e.sku)).join(", ")}${dups.length > 8 ? "..." : ""}</div>`;
+    html += `<div style="margin-top:10px;">O que fazer com eles?</div>`;
+    html += `<div style="margin-top:6px;">`;
+    html += `<label style="display:block; cursor:pointer; padding:6px;"><input type="radio" name="modo-dup" value="ignorar" ${modoDuplicados === "ignorar" ? "checked" : ""} /> <b>Ignorar</b> — manter mensagens atuais (recomendado pra cadastros novos)</label>`;
+    html += `<label style="display:block; cursor:pointer; padding:6px;"><input type="radio" name="modo-dup" value="atualizar" ${modoDuplicados === "atualizar" ? "checked" : ""} /> <b>Atualizar</b> — sobrescrever pelas mensagens da planilha (use pra editar em massa)</label>`;
+    html += `</div>`;
+
+    // Mostra preview do que vai mudar quando "atualizar" estiver marcado
+    if (modoDuplicados === "atualizar" && atualizarComMudanca.length > 0) {
+      html += `<div style="margin-top:10px;"><b>Mudanças que vão acontecer:</b></div>`;
+      const amostra = atualizarComMudanca.slice(0, 10);
+      for (const a of amostra) {
+        const antes = a.msgAtual || "<i>(em branco)</i>";
+        const depois = a.msgNova || "<i>(em branco)</i>";
+        html += `<div class="aviso-line" style="margin-top:4px;">• <b>${escapeHtml(a.sku)}</b>:<br>&nbsp;&nbsp;${antes} <b>→</b> ${depois}</div>`;
+      }
+      if (atualizarComMudanca.length > 10) {
+        html += `<div class="aviso-line">... e mais ${atualizarComMudanca.length - 10}</div>`;
+      }
     }
+
+    if (atualizarSemMudanca > 0 && modoDuplicados === "atualizar") {
+      html += `<div style="margin-top:8px; font-size:12px; color:#6c757d;">(${atualizarSemMudanca} já têm a mesma mensagem — sem alterações)</div>`;
+    }
+
+    html += `</div>`;
   }
-  if (validos.length === 0 && erros.length === 0) {
+
+  if (dupsPlanilha.length > 0) {
+    html += `<div style="margin-top:10px;" class="aviso-line">⚠️ ${dupsPlanilha.length} duplicado(s) na própria planilha (ignorados): ${dupsPlanilha.slice(0, 8).map(e => escapeHtml(e.sku)).join(", ")}${dupsPlanilha.length > 8 ? "..." : ""}</div>`;
+  }
+
+  if (novos.length === 0 && atualizar.length === 0) {
     html = `<div class="erro-line">Nenhum SKU encontrado no arquivo. Verifique o formato.</div>`;
   }
+
   $p.innerHTML = html;
-  $("import-confirmar").disabled = validos.length === 0;
-  $("import-info").textContent = `${validos.length} novo(s) · ${erros.length} ignorado(s)`;
-  pendentesImport = validos;
+
+  // Listener nos rádios — re-renderiza pra atualizar info e preview
+  $p.querySelectorAll('input[name="modo-dup"]').forEach(r => {
+    r.addEventListener("change", () => {
+      modoDuplicados = r.value;
+      mostrarPreview(novos, atualizar, dupsPlanilha);
+      atualizarBotaoConfirmar(novos, atualizar);
+    });
+  });
+
+  pendentesNovos = novos;
+  pendentesAtualizar = atualizar;
+  atualizarBotaoConfirmar(novos, atualizar);
+}
+
+function atualizarBotaoConfirmar(novos, atualizar) {
+  const atualizarComMudanca = atualizar.filter(a => a.msgNova !== a.msgAtual);
+  let totalEfetivo = novos.length;
+  if (modoDuplicados === "atualizar") totalEfetivo += atualizarComMudanca.length;
+
+  $("import-confirmar").disabled = totalEfetivo === 0;
+
+  let texto = `${novos.length} novo(s)`;
+  if (modoDuplicados === "atualizar" && atualizarComMudanca.length > 0) {
+    texto += ` · ${atualizarComMudanca.length} atualizar`;
+  } else if (atualizar.length > 0) {
+    texto += ` · ${atualizar.length} ignorar`;
+  }
+  $("import-info").textContent = texto;
 }
 
 function processarTextoBulk() {
   const txt = $("bulk-textarea").value.trim();
   if (!txt) { alert("Cole algum texto antes de processar."); return; }
-  // Detecta separador: prioriza TAB (Excel paste), depois |, depois ;
   const linhasRaw = txt.split(/\r?\n/).filter(l => l.trim());
   const linhas = linhasRaw.map(l => {
     if (l.includes("\t")) return l.split("\t");
     if (l.includes("|")) return l.split("|");
     if (l.includes(";")) return l.split(";");
-    return [l]; // só SKU sem mensagem
+    return [l];
   });
-  const { validos, erros } = processarLinhas(linhas);
-  mostrarPreview(validos, erros);
+  const { novos, atualizar, dupsPlanilha } = processarLinhas(linhas);
+  modoDuplicados = "ignorar";
+  mostrarPreview(novos, atualizar, dupsPlanilha);
 }
 
 function processarArquivoExcel(file) {
@@ -684,8 +753,9 @@ function processarArquivoExcel(file) {
       const aba = wb.SheetNames[0];
       const ws = wb.Sheets[aba];
       const linhas = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: "" });
-      const { validos, erros } = processarLinhas(linhas);
-      mostrarPreview(validos, erros);
+      const { novos, atualizar, dupsPlanilha } = processarLinhas(linhas);
+      modoDuplicados = "ignorar";
+      mostrarPreview(novos, atualizar, dupsPlanilha);
     } catch (err) {
       alert("Erro lendo arquivo: " + err.message);
     }
@@ -695,14 +765,41 @@ function processarArquivoExcel(file) {
 }
 
 function confirmarImport() {
-  if (pendentesImport.length === 0) return;
-  let n = 0;
-  for (const item of pendentesImport) {
+  let nNovos = 0;
+  let nAtualizados = 0;
+
+  // 1. Adiciona SKUs novos
+  for (const item of pendentesNovos) {
     adicionarLinha(item.sku, item.msg, {});
-    n++;
+    nNovos++;
   }
+
+  // 2. Atualiza SKUs existentes (se modo "atualizar")
+  if (modoDuplicados === "atualizar") {
+    for (const item of pendentesAtualizar) {
+      if (item.msgNova === item.msgAtual) continue; // pula sem mudança
+      const linhas = $tbody().querySelectorAll("tr");
+      for (const tr of linhas) {
+        const skuLinha = tr.querySelector(".input-sku")?.value.trim() || "";
+        if (skuLinha === item.sku) {
+          const $msg = tr.querySelector(".input-msg");
+          if ($msg) {
+            $msg.value = item.msgNova;
+            nAtualizados++;
+          }
+          break;
+        }
+      }
+    }
+  }
+
   fecharModalImport();
-  status(`✓ ${n} SKU(s) adicionado(s) à lista. Não esqueça de SALVAR TUDO.`, true);
+  let msg = "✓ ";
+  if (nNovos > 0) msg += `${nNovos} novo(s)`;
+  if (nNovos > 0 && nAtualizados > 0) msg += " e ";
+  if (nAtualizados > 0) msg += `${nAtualizados} atualizado(s)`;
+  msg += ". Não esqueça de SALVAR TUDO.";
+  status(msg, true);
 }
 
 function exportarExcel() {
